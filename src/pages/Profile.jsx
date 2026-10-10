@@ -52,10 +52,18 @@ const Profile = () => {
 
   const fetchUserVideos = async () => {
     try {
-      const response = await axios.get(`/api/users/${user._id}/videos`);
-      setUserVideos(response.data.videos);
+      const userId = user?._id || user?.id;
+      if (!userId) {
+        setUserVideos([]);
+        setLoading(false);
+        return;
+      }
+
+      const response = await axios.get(`/api/users/${userId}/videos`);
+      setUserVideos(response.data.videos || []);
     } catch (error) {
       console.error('Error fetching user videos:', error);
+      setUserVideos([]);
     } finally {
       setLoading(false);
     }

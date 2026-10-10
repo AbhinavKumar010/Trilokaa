@@ -1,100 +1,152 @@
-import { createContext, useContext, useState, useEffect, useRef } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
 import axios from 'axios';
 
-const AuthContext = createContext();
+const AuthContext = createContext(null);
 
 export const useAuth = () => {
   const context = useContext(AuthContext);
+
   if (!context) {
     throw new Error('useAuth must be used within an AuthProvider');
   }
+
   return context;
 };
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [token, setToken] = useState(localStorage.getItem('token'));
+  const [token, setToken] = useState(() => localStorage.getItem('token'));
 
-  // Ref to prevent multiple simultaneous auth requests
-  const checkingAuthRef = useRef(false);
-
-  // Configure axios Authorization header whenever token changes
   useEffect(() => {
     if (token) {
-      axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+      axios.defaults.headers.common.Authorization = `Bearer ${token}`;
     } else {
-      delete axios.defaults.headers.common['Authorization'];
+      delete axios.defaults.headers.common.Authorization;
     }
   }, [token]);
 
-  // Check if user is logged in on app start
   useEffect(() => {
-    const checkAuth = async () => {
-      if (checkingAuthRef.current) return; // prevent duplicate requests
-      checkingAuthRef.current = true;
+    const controller = new AbortController();
 
+    const checkAuth = async () => {
       if (!token) {
+        setUser(null);
         setLoading(false);
-        checkingAuthRef.current = false;
         return;
       }
 
+      setLoading(true);
+
       try {
-        const response = await axios.get('/api/auth/me');
+        const response = await axios.get('/api/auth/me', {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: controller.signal,
+        });
+
         setUser(response.data.user);
       } catch (error) {
-        console.error('Auth check failed:', error);
-        localStorage.removeItem('token');
-        setToken(null);
-        setUser(null);
+        if (controller.signal.aborted) return;
+
+        if (error.response?.status === 401) {
+          localStorage.removeItem('token');
+          setToken(null);
+          setUser(null);
+        } else {
+          console.error('Auth check failed:', error);
+        }
       } finally {
-        setLoading(false);
-        checkingAuthRef.current = false;
+        if (!controller.signal.aborted) {
+          setLoading(false);
+        }
       }
     };
 
     checkAuth();
+
+    return () => controller.abort();
   }, [token]);
+
+  const saveAuth = (newToken, userData) => {
+    const normalizedUser = { ...userData, _id: userData?._id || userData?.id };
+
+    localStorage.setItem('token', newToken);
+    axios.defaults.headers.common.Authorization = `Bearer ${newToken}`;
+    setToken(newToken);
+    setUser(normalizedUser);
+  };
 
   const login = async (email, password) => {
     try {
-      const response = await axios.post('/api/auth/login', { email, password });
+      const response = await axios.post('/api/auth/login', {
+        email,
+        password,
+      });
+
       const { token: newToken, user: userData } = response.data;
 
-      localStorage.setItem('token', newToken);
-      setToken(newToken);
-      setUser(userData);
+      if (!newToken || !userData) {
+        return { success: false, message: 'Invalid login response' };
+      }
 
+      saveAuth(newToken, userData);
       return { success: true };
     } catch (error) {
+      console.error('Login failed:', {
+        status: error.response?.status,
+        data: error.response?.data,
+        message: error.message,
+      });
+
       return {
         success: false,
-        message: error.response?.data?.message || 'Login failed',
+        message:
+          error.response?.data?.message ||
+          error.response?.data?.error ||
+          'Login failed',
       };
     }
   };
 
   const register = async (username, email, password) => {
     try {
-      const response = await axios.post('/api/auth/register', { username, email, password });
+      const response = await axios.post('/api/auth/register', {
+        username,
+        email,
+        password,
+      });
+
       const { token: newToken, user: userData } = response.data;
 
-      localStorage.setItem('token', newToken);
-      setToken(newToken);
-      setUser(userData);
+      if (!newToken || !userData) {
+        return {
+          success: false,
+          message: 'Invalid registration response',
+        };
+      }
 
+      saveAuth(newToken, userData);
       return { success: true };
     } catch (error) {
+      console.error('Registration failed:', {
+        status: error.response?.status,
+        data: error.response?.data,
+        message: error.message,
+      });
+
       return {
         success: false,
-        message: error.response?.data?.message || 'Registration failed',
+        message:
+          error.response?.data?.message ||
+          error.response?.data?.error ||
+          'Registration failed. Check the server logs.',
       };
     }
   };
 
   const logout = () => {
     localStorage.removeItem('token');
+    delete axios.defaults.headers.common.Authorization;
     setToken(null);
     setUser(null);
   };
@@ -105,9 +157,18 @@ export const AuthProvider = ({ children }) => {
       setUser(response.data.user);
       return { success: true };
     } catch (error) {
+      console.error('Profile update failed:', {
+        status: error.response?.status,
+        data: error.response?.data,
+        message: error.message,
+      });
+
       return {
         success: false,
-        message: error.response?.data?.message || 'Profile update failed',
+        message:
+          error.response?.data?.message ||
+          error.response?.data?.error ||
+          'Profile update failed',
       };
     }
   };
@@ -119,8 +180,12 @@ export const AuthProvider = ({ children }) => {
     register,
     logout,
     updateProfile,
-    isAuthenticated: !!user,
+    isAuthenticated: Boolean(user),
   };
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={value}>
+      {children}
+    </AuthContext.Provider>
+  );
 };

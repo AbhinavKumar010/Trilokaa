@@ -12,7 +12,8 @@ import {
   Chip,
   Alert,
   CircularProgress,
-  Container
+  Container,
+  LinearProgress
 } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
@@ -20,7 +21,7 @@ import axios from 'axios';
 
 const Upload = () => {
   const navigate = useNavigate();
-  const { isAuthenticated } = useAuth();
+  const { user, isAuthenticated } = useAuth();
   const [formData, setFormData] = useState({
     title: '',
     description: '',
@@ -29,6 +30,7 @@ const Upload = () => {
     videoFile: null
   });
   const [loading, setLoading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
@@ -63,6 +65,7 @@ const Upload = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
+    setUploadProgress(0);
     setError('');
     setSuccess('');
 
@@ -85,18 +88,28 @@ const Upload = () => {
       uploadData.append('description', formData.description);
       uploadData.append('category', formData.category);
       uploadData.append('tags', formData.tags);
+      uploadData.append('uploader', user?.username || 'Unknown');
+      uploadData.append('uploaderId', user?._id || user?.id || '');
 
       const response = await axios.post('/api/videos', uploadData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
+        onUploadProgress: (progressEvent) => {
+          const percentCompleted = Math.round(
+            (progressEvent.loaded * 100) / (progressEvent.total || 1)
+          );
+          setUploadProgress(percentCompleted);
+        },
       });
 
+      setUploadProgress(100);
       setSuccess('Video uploaded successfully!');
       setTimeout(() => {
         navigate(`/video/${response.data._id}`);
       }, 2000);
     } catch (error) {
+      setUploadProgress(0);
       setError(error.response?.data?.message || 'Upload failed');
     } finally {
       setLoading(false);
@@ -139,6 +152,19 @@ const Upload = () => {
           <Alert severity="success" sx={{ mb: 2 }}>
             {success}
           </Alert>
+        )}
+
+        {loading && (
+          <Box sx={{ mb: 3 }}>
+            <Typography variant="body2" sx={{ mb: 1 }}>
+              Uploading video... {uploadProgress}%
+            </Typography>
+            <LinearProgress
+              variant="determinate"
+              value={uploadProgress}
+              sx={{ height: 10, borderRadius: 5 }}
+            />
+          </Box>
         )}
 
         <Box component="form" onSubmit={handleSubmit}>
